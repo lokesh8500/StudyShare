@@ -96,6 +96,12 @@ exports.summarizePdf = async (req, res) => {
     if (error.status === 429 || error.code === 429) {
       return res.status(429).json({ message: 'AI quota exceeded' });
     }
+    if (error.status === 504 || error.code === 'GATEWAY_TIMEOUT') {
+      return res.status(504).json({ message: 'AI provider request timed out' });
+    }
+    if (error.status === 502 || error.code === 'NO_TEXT_CONTENT' || error.code === 'INVALID_JSON') {
+      return res.status(502).json({ message: 'AI service temporarily unavailable' });
+    }
     if (error.message?.includes('AI service')) {
       return res.status(502).json({ message: 'AI service temporarily unavailable' });
     }

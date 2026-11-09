@@ -29,6 +29,43 @@ class FreeLLMAPIService {
     }
   }
 
+  static extractTextFromProviderResponse(data) {
+    if (!data || !data.content || !Array.isArray(data.content)) {
+      return null;
+    }
+
+    // Find all text-type content blocks, ignore thinking blocks
+    const textBlocks = data.content
+      .filter(block => block && block.type === 'text' && typeof block.text === 'string')
+      .map(block => block.text.trim())
+      .filter(text => text.length > 0);
+
+    if (textBlocks.length === 0) {
+      return null;
+    }
+
+    // Concatenate all text blocks (some providers split output)
+    return textBlocks.join('\n');
+  }
+
+  static extractJsonFromText(text) {
+    if (!text || typeof text !== 'string') {
+      return null;
+    }
+
+    // Try to find JSON object in the text (handles ```json wrapper and plain JSON)
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(jsonMatch[0]);
+    } catch (e) {
+      return null;
+    }
+  }
+
   async generateSummary(noteTitle, pdfText) {
     const prompt = `
 You are an expert academic assistant. Create a student-friendly summary of the following document.
@@ -59,6 +96,9 @@ Requirements:
 `;
 
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout
+
       const response = await fetch(`${this.baseUrl}/v1/messages`, {
         method: 'POST',
         headers: {
@@ -69,9 +109,13 @@ Requirements:
           model: this.modelName,
           messages: [{ role: 'user', content: prompt }],
           max_tokens: 4000,
-          temperature: 0.3
-        })
+          temperature: 0.3,
+          thinking: { type: 'disabled' }
+        }),
+        signal: controller.signal
       });
+
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
@@ -83,20 +127,37 @@ Requirements:
 
       const data = await response.json();
 
-      if (!data.content || !data.content[0] || !data.content[0].text) {
-        throw new Error('Invalid response format from FreeLLMAPI');
+      // Extract text from response, ignoring thinking blocks
+      const text = FreeLLMAPIService.extractTextFromProviderResponse(data);
+
+      if (!text) {
+        const err = new Error('No usable text content in provider response (only thinking blocks or empty)');
+        err.status = 502;
+        err.code = 'NO_TEXT_CONTENT';
+        throw err;
       }
 
-      const text = data.content[0].text;
+      // Extract JSON from text (handles ```json markdown wrapper)
+      const parsed = FreeLLMAPIService.extractJsonFromText(text);
 
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error('Invalid JSON response from FreeLLMAPI');
+      if (!parsed) {
+        const err = new Error('Failed to parse JSON from provider response');
+        err.status = 502;
+        err.code = 'INVALID_JSON';
+        throw err;
       }
 
-      return JSON.parse(jsonMatch[0]);
+      return parsed;
     } catch (error) {
-      // Log structured error for debugging without exposing secrets
+      // Handle fetch abort/timeout
+      if (error.name === 'AbortError' || error.code === 'ETIMEDOUT' || error.message?.includes('timeout')) {
+        const timeoutErr = new Error('AI provider request timed out');
+        timeoutErr.status = 504;
+        timeoutErr.code = 'GATEWAY_TIMEOUT';
+        throw timeoutErr;
+      }
+
+      // Log structured error for debugging without exposing secrets or thinking traces
       console.error('[FreeLLMAPIService] API error:', {
         status: error.status,
         name: error.name,
@@ -105,11 +166,7 @@ Requirements:
         message: error.message?.slice?.(0, 300) || 'unknown'
       });
 
-      if (error.message?.includes('JSON')) {
-        throw new Error(`Failed to parse AI response: ${error.message}`);
-      }
-
-      // Preserve HTTP status and quota details for controller to use
+      // Preserve HTTP status and error codes for controller
       const enhancedError = new Error(`FreeLLMAPI error: ${error.message}`);
       enhancedError.status = error.status;
       enhancedError.code = error.code;
