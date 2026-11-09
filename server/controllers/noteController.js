@@ -5,6 +5,7 @@ const path = require("path");
 const mongoose = require("mongoose");
 const { uploadDir } = require("../middleware/uploadMiddleware");
 const AIService = require("../services/aiService");
+const FreeLLMAPIService = require("../services/freellmapiService");
 
 // UPLOAD NOTE
 exports.uploadNote = async (req, res) => {
@@ -154,7 +155,13 @@ exports.generateSummary = async (req, res) => {
       return res.status(404).json({ message: "PDF file not found" });
     }
 
-    const aiService = new AIService();
+    const aiProvider = process.env.AI_PROVIDER || 'gemini';
+    let aiService;
+    if (aiProvider === 'freellmapi') {
+      aiService = new FreeLLMAPIService();
+    } else {
+      aiService = new AIService();
+    }
     const summaryData = await aiService.summarizePDF(filePath, note.title);
 
     // Save summary to database
@@ -173,15 +180,28 @@ exports.generateSummary = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("AI Summary generation error:", error.message);
+    // Structured logging for debugging (no secrets)
+    console.error('[NoteController] AI Summary generation error:', {
+      status: error.status,
+      name: error.name,
+      code: error.code,
+      message: error.message?.slice?.(0, 300) || 'unknown'
+    });
 
-    if (error.message.includes("GEMINI_API_KEY")) {
+    if (error.message?.includes("GEMINI_API_KEY") || error.message?.includes("FREELLMAPI_API_KEY")) {
       return res.status(500).json({ message: "AI service not configured" });
     }
-    if (error.message.includes("empty or unreadable")) {
+    if (error.message?.includes("empty or unreadable")) {
       return res.status(400).json({ message: "PDF is empty or unreadable" });
     }
-    if (error.message.includes("Gemini API")) {
+    if (error.message?.includes("Gemini API") || error.message?.includes("FreeLLMAPI")) {
+      // Distinguish quota exhaustion (429) from other API errors
+      if (error.status === 429 || error.code === 429) {
+        return res.status(429).json({
+          message: "AI quota exceeded. Please try again later or upgrade your plan.",
+          retryAfter: error.retryDelay || 'unknown'
+        });
+      }
       return res.status(502).json({ message: "AI service temporarily unavailable" });
     }
 

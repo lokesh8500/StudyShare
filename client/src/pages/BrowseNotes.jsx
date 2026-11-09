@@ -10,6 +10,8 @@ import {
   BookOpen,
   Award
 } from "lucide-react";
+import SummaryModal from "../components/SummaryModal";
+import { API } from "../utils/api";
 
 function BrowseNotes({ user }) {
   const navigate = useNavigate();
@@ -25,6 +27,13 @@ function BrowseNotes({ user }) {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  // AI Summary states
+  const [showSummaryModal, setShowSummaryModal] = useState(false);
+  const [currentSummary, setCurrentSummary] = useState(null);
+  const [expandedSummaryId, setExpandedSummaryId] = useState(null);
+  const [loadingSummaryId, setLoadingSummaryId] = useState(null);
+  const [summaryErrorId, setSummaryErrorId] = useState(null);
 
   const headers = () => ({
     Authorization: `Bearer ${localStorage.getItem("token")}`
@@ -97,6 +106,65 @@ function BrowseNotes({ user }) {
   const handlePreview = (note) => {
     const viewerUrl = `https://docs.google.com/gview?embedded=true&url=${encodeURIComponent(`http://localhost:5000/api/notes/${note._id}/download`)}`;
     window.open(viewerUrl, "_blank");
+  };
+
+  const fetchDataAndSummary = async (note) => {
+    // Only show button for approved PDF notes
+    if (note.status !== "approved") {
+      setError("Only approved PDF notes can be summarized.");
+      return;
+    }
+
+    if (!note.fileType.toLowerCase().includes(".pdf")) {
+      setError("Only PDF files can be summarized.");
+      return;
+    }
+
+    // Check if summary already exists
+    if (note.aiSummary?.content?.overview) {
+      setCurrentSummary(note.aiSummary);
+      setShowSummaryModal(true);
+      return;
+    }
+
+    const noteId = note._id;
+    setLoadingSummaryId(noteId);
+    setSummaryErrorId(null);
+
+    try {
+      // Try to fetch existing summary
+      const getResponse = await API.notes.getSummary(noteId);
+      if (getResponse.ok && getResponse.status !== 404) {
+        const { summary } = await getResponse.json();
+        setCurrentSummary(summary);
+        setShowSummaryModal(true);
+        return;
+      }
+    } catch (err) {
+      console.error("Failed to fetch summary:", err);
+    }
+
+    // Generate new summary if not exists
+    try {
+      const postResponse = await API.notes.generateSummary(noteId);
+
+      if (!postResponse.ok) {
+        const errorData = await postResponse.json().catch(() => ({}));
+        throw new Error(errorData.message || "Failed to generate summary");
+      }
+
+      const { summary } = await postResponse.json();
+      setCurrentSummary(summary);
+      setShowSummaryModal(true);
+      setNotes((prev) =>
+        prev.map((n) => (n._id === noteId ? { ...n, aiSummary: summary } : n))
+      );
+    } catch (err) {
+      setSummaryErrorId(noteId);
+      setError(err.message || "Failed to generate summary. Please try again.");
+    } finally {
+      setLoadingSummaryId(null);
+    }
   };
 
   const filteredNotes = notes.filter((note) => {
@@ -224,6 +292,16 @@ function BrowseNotes({ user }) {
                       Preview
                     </button>
 
+                    {(loadingSummaryId === note._id || summaryErrorId === note._id || note.aiSummary?.content?.overview) && note.fileType.toLowerCase().includes(".pdf") && note.status === "approved" && (
+                      <button
+                        className="summary-btn"
+                        onClick={() => fetchDataAndSummary(note)}
+                        disabled={loadingSummaryId === note._id}
+                      >
+                        {loadingSummaryId === note._id ? "Loading..." : (summaryErrorId === note._id ? "Error - View" : "View Summary")}
+                      </button>
+                    )}
+
                     <button
                       className="note-download-btn"
                       onClick={() => handleDownload(note)}
@@ -239,6 +317,18 @@ function BrowseNotes({ user }) {
           </div>
         )}
       </main>
+
+      {showSummaryModal && (
+        <SummaryModal
+          note={{ title: currentSummary?.content }}
+          summary={currentSummary}
+          onClose={() => {
+            setShowSummaryModal(false);
+            setCurrentSummary(null);
+            setError("");
+          }}
+        />
+      )}
     </div>
   );
 }

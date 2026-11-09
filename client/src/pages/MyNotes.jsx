@@ -1,11 +1,20 @@
 
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import SummaryModal from "../components/SummaryModal";
+import { API } from "../utils/api";
 
 function MyNotes() {
   const [notes, setNotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  // AI Summary states
+  const [showSummaryModal, setShowSummaryModal] = useState(false);
+  const [currentSummary, setCurrentSummary] = useState(null);
+  const [expandedSummaryId, setExpandedSummaryId] = useState(null);
+  const [loadingSummaryId, setLoadingSummaryId] = useState(null);
+  const [summaryErrorId, setSummaryErrorId] = useState(null);
 
   const fetchNotes = async () => {
     try {
@@ -57,6 +66,58 @@ function MyNotes() {
     } catch (err) {
       setError(err.message);
     }
+  };
+
+  const fetchDataAndSummary = async (note) => {
+    // Check if PDF has summary
+    if (note.aiSummary?.content?.overview) {
+      setCurrentSummary(note.aiSummary);
+      setShowSummaryModal(true);
+      return;
+    }
+
+    const noteId = note._id;
+    setLoadingSummaryId(noteId);
+    setSummaryErrorId(null);
+
+    try {
+      // Try to fetch existing summary
+      const getResponse = await API.notes.getSummary(noteId);
+      if (getResponse.ok && getResponse.status !== 404) {
+        const { summary } = await getResponse.json();
+        setCurrentSummary(summary);
+        setShowSummaryModal(true);
+        return;
+      }
+    } catch (err) {
+      console.error("Failed to fetch summary:", err);
+    }
+
+    // Generate new summary if not exists
+    try {
+      const postResponse = await API.notes.generateSummary(noteId);
+
+      if (!postResponse.ok) {
+        const errorData = await postResponse.json().catch(() => ({}));
+        throw new Error(errorData.message || "Failed to generate summary");
+      }
+
+      const { summary } = await postResponse.json();
+      setCurrentSummary(summary);
+      setShowSummaryModal(true);
+      setNotes((prev) =>
+        prev.map((n) => (n._id === noteId ? { ...n, aiSummary: summary } : n))
+      );
+    } catch (err) {
+      setSummaryErrorId(noteId);
+      setError(err.message || "Failed to generate summary. Please try again.");
+    } finally {
+      setLoadingSummaryId(null);
+    }
+  };
+
+  const updateNotesWithSummary = (noteId, summary) => {
+    setNotes((prev) => prev.map((n) => (n._id === noteId ? { ...n, aiSummary: summary } : n)));
   };
 
   return (
@@ -112,6 +173,24 @@ function MyNotes() {
                   Uploaded {new Date(note.createdAt).toLocaleDateString()}
                 </small>
 
+                {note.fileType.toLowerCase().includes(".pdf") && (
+                  <button
+                    className="summary-btn"
+                    onClick={() => fetchDataAndSummary(note)}
+                    disabled={loadingSummaryId === note._id}
+                  >
+                    {loadingSummaryId === note._id ? (
+                      <>Loading...</>
+                    ) : summaryErrorId === note._id ? (
+                      <>Error</>
+                    ) : note.aiSummary?.content?.overview ? (
+                      <>View Summary</>
+                    ) : (
+                      <>Generate Summary</>
+                    )}
+                  </button>
+                )}
+
                 <button
                   className="delete-btn"
                   onClick={() => deleteNote(note._id)}
@@ -123,6 +202,17 @@ function MyNotes() {
           </div>
         )}
       </main>
+
+      {showSummaryModal && (
+        <SummaryModal
+          note={{ title: currentSummary?.content }}
+          summary={currentSummary}
+          onClose={() => {
+            setShowSummaryModal(false);
+            setCurrentSummary(null);
+          }}
+        />
+      )}
     </div>
   );
 }

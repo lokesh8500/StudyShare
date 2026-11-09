@@ -1,7 +1,20 @@
 {
   "permissions": {
     "allow": [
-      "Bash(cmd //c dir F:\\\\studyshare)"
+      "Bash(cmd //c dir F:\\\\studyshare)",
+      "Bash(npm run *)",
+      "Bash(curl *)",
+      "WebSearch",
+      "Bash(npm start *)",
+      "Bash(pkill -f \"node server.js\")",
+      "Bash(taskkill /F /IM node.exe)",
+      "Bash(netstat -ano)",
+      "Bash(findstr :5000)",
+      "Bash(taskkill *)",
+      "Bash(wmic process *)",
+      "Read(//tmp/**)",
+      "Bash(mkdir -p /tmp/studyshare_ai)",
+      "Bash(node server.js)"
     ]
   }
 }

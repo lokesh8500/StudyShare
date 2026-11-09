@@ -1,6 +1,7 @@
 import UploadNotes from "./pages/UploadNotes";
 import MyNotes from "./pages/MyNotes";
 import BrowseNotes from "./pages/BrowseNotes";
+import AISummarizer from "./pages/AISummarizer";
 import "./student.css";
 import { useEffect, useState } from "react";
 import {
@@ -109,6 +110,11 @@ function App() {
         <Route
           path="/notes"
           element={user ? <BrowseNotes user={user} /> : <Navigate to="/login" />}
+        />
+
+        <Route
+          path="/ai-summarizer"
+          element={user && ['student', 'admin'].includes(user.role) ? <AISummarizer /> : <Navigate to="/login" />}
         />
 
         <Route

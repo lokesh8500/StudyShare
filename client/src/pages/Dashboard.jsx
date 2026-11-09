@@ -50,6 +50,7 @@ function Dashboard({ user, onLogout }) {
           <Link to="/dashboard">Dashboard</Link>
           <Link to="/my-notes">My Notes</Link>
           <Link to="/upload">Upload</Link>
+          <Link to="/ai-summarizer">AI Summarizer</Link>
           <button onClick={onLogout} className="logout-btn">
             <LogOut size={16} /> Logout
           </button>

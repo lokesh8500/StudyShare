@@ -72,10 +72,24 @@ Requirements:
 
       return JSON.parse(jsonMatch[0]);
     } catch (error) {
-      if (error.message.includes('JSON')) {
+      // Log structured error for debugging without exposing secrets
+      console.error('[AIService] Gemini API error:', {
+        status: error.status,
+        name: error.name,
+        code: error.code,
+        model: this.modelName,
+        message: error.message?.slice?.(0, 300) || 'unknown'
+      });
+
+      if (error.message?.includes('JSON')) {
         throw new Error(`Failed to parse AI response: ${error.message}`);
       }
-      throw new Error(`Gemini API error: ${error.message}`);
+
+      // Preserve HTTP status and quota details for controller to use
+      const enhancedError = new Error(`Gemini API error: ${error.message}`);
+      enhancedError.status = error.status;
+      enhancedError.code = error.code;
+      throw enhancedError;
     }
   }
 
